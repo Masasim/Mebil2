@@ -2,6 +2,7 @@
 using Mebil2.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Linq;
 using System.Threading.Tasks;
 
 namespace Mebil2.Controllers
@@ -15,51 +16,107 @@ namespace Mebil2.Controllers
             _context = context;
         }
 
-        // Action to list all customers
-        public async Task<IActionResult> Index()
+        public async Task<IActionResult> Index(
+            string searchString,
+            string sortOrder = "id_desc",
+            int pageSize = 5,
+            int page = 1)
         {
-            var customers = await _context.Customers.ToListAsync();
-            return View(customers); // Pass the list of customers to the view
-        }
+            // Підготовка запиту з усіх Customer
+            var customers = _context.Customers.AsQueryable();
 
-        // Action to edit a specific customer by ID
-        public async Task<IActionResult> Edit(int id)
-        {
-            var customer = await _context.Customers.FindAsync(id);
-            if (customer == null)
+            // Пошук
+            if (!string.IsNullOrEmpty(searchString))
             {
-                return NotFound(); // Return a 404 if customer not found
+                customers = customers.Where(c =>
+                    c.name.Contains(searchString) ||
+                    c.address.Contains(searchString) ||
+                    c.bankDetails.Contains(searchString));
             }
-            return View(customer); // Pass the customer to the edit view
+
+            // Сортування
+            customers = sortOrder switch
+            {
+                "id_asc" => customers.OrderBy(c => c.id),
+                "id_desc" => customers.OrderByDescending(c => c.id),
+                "name_asc" => customers.OrderBy(c => c.name),
+                "name_desc" => customers.OrderByDescending(c => c.name),
+                _ => customers.OrderByDescending(c => c.id)
+            };
+
+            // Пагінація
+            var totalCustomers = await customers.CountAsync();
+            var pagedCustomers = await customers
+                .Skip((page - 1) * pageSize)
+                .Take(pageSize)
+                .ToListAsync();
+
+            var viewModel = new CustomerIndexViewModel
+            {
+                Customers = pagedCustomers,
+                CurrentPage = page,
+                TotalPages = (int)Math.Ceiling(totalCustomers / (double)pageSize),
+                PageSize = pageSize,
+                SearchString = searchString,
+                SortOrder = sortOrder
+            };
+
+            return View(viewModel);
         }
 
-        // Action to save changes made to the customer
-        [HttpPost]
-        public async Task<IActionResult> Edit(int id, [FromForm] Customer updatedCustomer)
+        public IActionResult Create()
         {
-            var form = await HttpContext.Request.ReadFormAsync();
+            return View();
+        }
 
-            var name = form["name"].ToString();
-            var address = form["address"].ToString();
-            var bankDetails = form["bankDetails"].ToString();
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public async Task<IActionResult> Create(Customer customer)
+        {
+            if (ModelState.IsValid)
+            {
+                _context.Customers.Add(customer);
+                await _context.SaveChangesAsync();
+                return RedirectToAction(nameof(Index));
+            }
+            return View(customer);
+        }
 
-            // Find the customer by id
+        public async Task<IActionResult> Details(int id)
+        {
             var customer = await _context.Customers.FindAsync(id);
+
             if (customer == null)
             {
                 return NotFound();
             }
 
-            // Update the customer with the new form values
-            customer.name = name;
-            customer.address = address;
-            customer.bankDetails = bankDetails;
-
-            // Save changes to the database
-            _context.Customers.Update(customer);
-            await _context.SaveChangesAsync();
-
-            return RedirectToAction("Index");
+            return View(customer);
         }
+
+        [HttpPost]
+        public async Task<IActionResult> Delete(int id)
+        {
+            var customer = await _context.Customers.FindAsync(id);
+
+            if (customer == null)
+            {
+                return NotFound();
+            }
+
+            _context.Customers.Remove(customer);
+            await _context.SaveChangesAsync();
+            return RedirectToAction(nameof(Index));
+        }
+    }
+
+    public class CustomerIndexViewModel
+    {
+        public List<Customer> Customers { get; set; }
+        public int CurrentPage { get; set; }
+        public int TotalPages { get; set; }
+        public int PageSize { get; set; }
+        public string SearchString { get; set; }
+        public string SortOrder { get; set; }
     }
 }
